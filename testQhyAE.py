@@ -24,8 +24,8 @@ def calculate_brightness(frame):
     return brightness
 
 
-# Auto adjusts to mean brightness level over frame or ROI
-def adjust_exposure(cv_image, current_exposure=1000, current_gain=20, targetMSV=2.2, max_exposure=50000, min_gain=15):
+# Auto adjusts to mean sample value over frame or ROI
+def adjust_exposure(cv_image, current_exposure=1000, current_gain=15, targetMSV=2.2, max_exposure=50000, min_gain=10, max_exposure_step=2000):
     (rows, cols, channels) = cv_image.shape
     if channels == 3:
         brightness_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)[:, :, 2]
@@ -53,25 +53,36 @@ def adjust_exposure(cv_image, current_exposure=1000, current_gain=20, targetMSV=
     max_i = 3
 
     err_p = targetMSV - mean_sample_value
+    
+
     global err_i
     err_i += err_p
 
     if abs(err_i) > max_i:
         err_i = np.sign(err_i) * max_i
 
-    if abs(err_p) > 0.5:
+    if abs(err_p) > 0.1:
+        print(f"targetMSV: {targetMSV}, mean_sample_value: {mean_sample_value}")
         if err_p < 0 and current_gain > min_gain:
-            gain_decrement = abs(err_p) * 0.5
+            gain_decrement = abs(err_p) * 2.9
             new_gain = max(current_gain - gain_decrement, min_gain)
             camera.setControl(pysky360.ControlParam.Gain, new_gain, False)
             return current_exposure, new_gain
 
-        new_exposure = current_exposure + k_p * err_p + k_i * err_i
+        # Calculate the desired exposure change
+        desired_exposure_change = k_p * err_p + k_i * err_i
+
+        # Limit the exposure change to max_exposure_step
+        exposure_change = np.clip(desired_exposure_change, -max_exposure_step, max_exposure_step)
+
+        # Update the exposure value
+        new_exposure = current_exposure + exposure_change
+
 
         if new_exposure > max_exposure:
             new_exposure = max_exposure
-            gain_increment = (targetMSV - mean_sample_value) * 0.75
-            new_gain = current_gain + gain_increment
+            gain_increment = (targetMSV - mean_sample_value) * 2.9
+            new_gain = max(current_gain + gain_increment, min_gain)
             camera.setControl(pysky360.ControlParam.Gain, new_gain, False)
             return new_exposure, new_gain
 
@@ -81,37 +92,28 @@ def adjust_exposure(cv_image, current_exposure=1000, current_gain=20, targetMSV=
         return current_exposure, current_gain
 
     
-current_exposure = 1000.0  # Set the initial exposure value (day)
-# current_exposure = 90000.0 (night)
-current_gain = 20  # Set the initial gain value
+current_exposure = 10000.0  # Set the initial exposure 
+targetMSV = 1.9 # day
+# targetMSV = 1.1 # night
+current_gain = 10  # Set the initial gain
 err_i = 0
-
-camera = pysky360.QHYCamera()
 
 cv2.namedWindow("Live Video", cv2.WINDOW_NORMAL);
 cv2.resizeWindow("Live Video", (800, 800));
 
+camera = pysky360.QHYCamera()
 camera.open('')
 camera.setControl(pysky360.ControlParam.Exposure, current_exposure, False)
 camera.setControl(pysky360.ControlParam.Gain, current_gain, False)
 camera.setControl(pysky360.ControlParam.TransferBits, 8, False)
-
-wait_frames = 0  # Number of frames to wait after setting a new exposure value is set
-wait_counter = 0  # Counter to keep track of waited frames
+camera.setControl(pysky360.ControlParam.UsbTraffic, 0, False)
 
 while True:
     frame = camera.getFrame(True)
-    current_brightness = calculate_brightness(frame)
-    print(f"Current Brightness: {current_brightness}")
-
-    # Only adjust exposure if the wait_counter is zero
-    if wait_counter == 0:
-
-        current_exposure, current_gain = adjust_exposure(frame, current_exposure, current_gain, 1.8)
-        print(f"Current exposure: {current_exposure}, Current gain: {current_gain}")
-        wait_counter = wait_frames
-    else:
-        wait_counter -= 1
+    # current_brightness = calculate_brightness(frame)
+    # print(f"Current Brightness: {current_brightness}")
+    current_exposure, current_gain = adjust_exposure(frame, current_exposure, current_gain, targetMSV)
+    # print(f"Current exposure: {current_exposure}, Current gain: {current_gain}")
 
     cv2.imshow('Live Video', frame)
 
